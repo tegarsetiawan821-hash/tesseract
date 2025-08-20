@@ -1,16 +1,81 @@
-prefix=@prefix@
-exec_prefix=@exec_prefix@
-bindir=@bindir@
-datarootdir = @datarootdir@
-datadir=@datadir@
-libdir=@libdir@
-includedir=@includedir@
+from flask import Flask, request, render_template, send_from_directory
+from werkzeug.utils import secure_filename
+import os
+import pytesseract
+from PIL import Image
+import re
+import uuid
 
-Name: @PACKAGE_NAME@
-Description: An OCR Engine that was developed at HP Labs (1985-1995) and Google (2006-2018).
-URL: https://github.com/tesseract-ocr/tesseract
-Version: @VERSION@
-Requires.private: lept
-Libs: -L${libdir} -ltesseract @libarchive_LIBS@ @libcurl_LIBS@
-Libs.private: -lpthread
-Cflags: -I${includedir}
+UPLOAD_FOLDER = 'uploads'
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+# Fungsi ekstrak nama dari hasil OCR (disesuaikan dgn format KTP Indonesia)
+def extract_name(text):
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if 'nama' in line.lower():
+            nama_line = line.lower().replace('nama', '').replace(':', '').strip()
+            # Hilangkan karakter aneh
+            nama = re.sub(r'[^a-zA-Z\s]', '', nama_line)
+            return nama.title()
+    return "Tidak_Diketahui"
+
+@app.route('/', methods=['GET', 'POST'])
+def upload_file():
+    if request.method == 'POST':
+        if 'ktp' not in request.files:
+            return 'No file part'
+
+        file = request.files['ktp']
+        if file.filename == '':
+            return 'No selected file'
+
+        if file:
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+
+            # OCR untuk membaca nama
+            image = Image.open(filepath)
+            text = pytesseract.image_to_string(image, lang='ind')
+
+            nama = extract_name(text)
+            if nama == "Tidak_Diketahui":
+                nama = f"user_{uuid.uuid4().hex[:6]}"
+
+            new_filename = f"{nama.replace(' ', '_')}.jpg"
+            new_filepath = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
+            os.rename(filepath, new_filepath)
+
+            return f'''
+                <h3>File berhasil diunggah dan dinamai ulang sebagai: {new_filename}</h3>
+                <a href="/uploads/{new_filename}" download>Download file</a>
+                <br><br>
+                <a href="/">Upload lagi</a>
+            '''
+
+    return render_template('upload.html')
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload KTP</title>
+</head>
+<body>
+    <h2>Upload Foto KTP</h2>
+    <form method="post" enctype="multipart/form-data">
+        <input type="file" name="ktp" accept="image/*" required>
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>
